@@ -1,0 +1,7 @@
+# Only requirements.txt and app/ are copied, but this keeps the build context small.
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.venv
+tests
+.env*

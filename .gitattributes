@@ -1,0 +1,4 @@
+# Scripts and manifests run on Linux (containers, CI, Kubernetes), so keep LF
+# line endings even when the repo is checked out on Windows.
+* text=auto eol=lf
+*.png binary
