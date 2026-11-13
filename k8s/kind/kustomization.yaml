@@ -1,0 +1,17 @@
+# The base, plus what a local kind cluster needs: the frontend on a fixed
+# NodePort that kind/cluster.yaml maps to http://127.0.0.1:8080.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - target:
+      kind: Service
+      name: frontend
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080

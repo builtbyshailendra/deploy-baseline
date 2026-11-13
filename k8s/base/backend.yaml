@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  # A release that isn't ready within 90 seconds is marked as failed.
+  progressDeadlineSeconds: 90
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      # Never remove a working pod before its replacement is ready. A release
+      # that never becomes ready leaves the old pods serving.
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Wait for PostgreSQL, instead of crashing and being restarted with an
+        # ever longer back-off while the database starts on a fresh cluster.
+        - name: wait-for-database
+          image: serviceops-backend
+          command:
+            - python
+            - -c
+            - |
+              import os, time
+              from sqlalchemy import create_engine, text
+              engine = create_engine(os.environ["DATABASE_URL"], connect_args={"connect_timeout": 3})
+              for _ in range(60):
+                  try:
+                      with engine.connect() as connection:
+                          connection.execute(text("SELECT 1"))
+                      break
+                  except Exception as error:
+                      print("Waiting for the database:", type(error).__name__, flush=True)
+                      time.sleep(2)
+              else:
+                  raise SystemExit("The database wasn't reachable within two minutes")
+          env: &database
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: serviceops-db
+                  key: database-url
+          securityContext: &locked-down
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: backend
+          image: serviceops-backend
+          ports:
+            - name: http
+              containerPort: 8000
+          env: *database
+          # Startup: up to 60 seconds to create the tables and start listening.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          # Liveness: restart the process if it stops answering. No database
+          # check here, so a database outage doesn't restart every pod.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness: only send traffic while it can reach the database.
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            # Keep serving for a few seconds after Kubernetes decides to stop the
+            # pod, while the Service stops routing to it.
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext: *locked-down

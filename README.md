@@ -27,3 +27,25 @@ The app lives in [`app/`](app) as a git submodule pinned to one commit, so this 
 **Built:** a GitHub Actions workflow. It checks out the app submodule, lints both Dockerfiles with `docker build --check`, builds each image once, starts the stack in compose from those images and runs the smoke test. On `main` it pushes them to GitHub Container Registry, tagged with this repo's commit. Each image also carries labels with this repo's commit and the app's commit, so `docker inspect` tells you exactly what's inside.
 
 **Decision:** build once, test what ships. Compose takes the image names from `BACKEND_IMAGE` and `FRONTEND_IMAGE`, so CI tests the images it pushes instead of building fresh ones.
+
+### Step 4: Kubernetes manifests with health checks
+
+**Built:** manifests in [`k8s/base`](k8s/base) for PostgreSQL (one pod with its own volume), two backend pods and two frontend pods, plus a [`k8s/kind`](k8s/kind) overlay that puts the frontend on `http://127.0.0.1:8080` in a local [kind](https://kind.sigs.k8s.io/) cluster. [`scripts/deploy.sh`](scripts/deploy.sh) deploys one release (an image tag) and waits for it. CI now creates a kind cluster, deploys the images it just built and runs the smoke test through the cluster.
+
+Every pod has three checks:
+
+| Check | Backend | Frontend | What Kubernetes does when it fails |
+|---|---|---|---|
+| Startup | `/api/health`, up to 60 s | `/`, up to 60 s | Restarts the pod; the other two checks wait for it |
+| Liveness | `/api/health` | `/` | Restarts the pod |
+| Readiness | `/api/ready`, which needs the database | `/` | Stops sending it traffic, without a restart |
+
+**Decisions:**
+- **No database check in liveness.** If PostgreSQL goes down, restarting every backend pod wouldn't fix anything. The pods go not-ready instead and come back by themselves.
+- **No unavailable pods during a rollout.** With `maxUnavailable: 0`, an old pod is only removed once its replacement is ready, so a release that never becomes ready leaves the old one serving.
+- **Wait for the database in an init container.** On a fresh cluster the backend starts before PostgreSQL. Without the wait it crashes, and Kubernetes restarts it with a longer pause each time.
+- **A five-second `preStop` pause.** Kubernetes stops routing to a pod and tells it to stop at about the same time. The pause lets in-flight requests finish.
+- **Locked-down containers.** They run as non-root on a read-only filesystem with every Linux capability dropped. Next.js gets a small writable folder for its cache.
+- **A password made inside the cluster.** The deploy script generates the database password the first time and stores it as a Kubernetes Secret, so it never exists in this repo or in CI.
+
+**Learned:** the PostgreSQL image starts a temporary server while it creates a new database, listening only on its socket. `pg_isready` over the socket calls that "ready" a moment before it restarts, so the checks use `-h 127.0.0.1`. The compose file now does the same.

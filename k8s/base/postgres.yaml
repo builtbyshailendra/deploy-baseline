@@ -1,0 +1,75 @@
+# One PostgreSQL pod with its own volume. Fine for a demo cluster; a real
+# deployment would use a managed database with backups.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16.16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: serviceops
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: serviceops-db
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          # -h 127.0.0.1, not the socket: while the image initialises a new
+          # database it runs a temporary server on the socket only, and a socket
+          # check would call that "ready" just before it restarts.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "serviceops"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
