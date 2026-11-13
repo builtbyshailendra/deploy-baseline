@@ -79,6 +79,12 @@ python3 scripts/smoke.py http://127.0.0.1:8080
 
 Then open http://127.0.0.1:8080. `kind delete cluster --name serviceops` removes the whole cluster.
 
+To skip the builds, use the images CI publishes. They're public on GitHub Container Registry and tagged with the commit that built them, so after `kind create cluster`, this pulls and deploys the images for a commit on `main`:
+
+```bash
+scripts/deploy.sh <short commit id>
+```
+
 ## Runbook
 
 Commands for the Kubernetes setup. CI goes through each situation here on every push: a deploy, a release that fails and is rolled back, a database outage, and a backup and restore. The manual `rollout undo` and `rollout restart` commands aren't run by CI.
@@ -219,6 +225,25 @@ CI checks that Prometheus scrapes the backend and has seen the smoke test's requ
 - **A database outage.** It stops PostgreSQL and checks that the backend pods go not-ready but aren't restarted, even after waiting longer than the liveness check would need. Then it starts PostgreSQL again and checks that the pods become ready by themselves and the app works.
 
 **Decision:** a runbook step that has never been tried is a guess. CI goes through every situation in the runbook on every push. Only the manual `rollout undo` and `rollout restart` commands aren't run.
+
+### First runs on GitHub
+
+**What worked first time:** the whole `images` job. Both images built, the stack came up in compose, the smoke test passed, Prometheus and Grafana passed their checks, and the images were pushed.
+
+**What broke:** two things in the Kubernetes job, both about files rather than Kubernetes.
+- `curl -o kind` failed with `client returned ERROR on write`. The workflow downloaded the kind program to a file called `kind`, but the repo already has a `kind/` folder for the cluster config. It now downloads to the runner's temp folder.
+- `scripts/deploy.sh: Permission denied`. I write these scripts on Windows, where `chmod +x` doesn't reach git, so they were committed as ordinary files. `git update-index --chmod=+x` fixed it.
+
+**What the third run showed**, in a kind cluster running Kubernetes 1.37:
+
+| Check | Result |
+|---|---|
+| Calls during the bad release and its rollback | 331 calls over 68 seconds, none failed |
+| Backend and frontend after the rollback | Both back on the previous release |
+| Requests at the backup, after one more, after the restore | 2, 3, 2 |
+| Backend restarts while PostgreSQL was down | None, as designed |
+
+**Learned:** images pushed to GitHub Container Registry with this repo as their source came out public, the same as the repo, so anyone can pull them without signing in.
 
 ## Next
 
