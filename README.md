@@ -21,3 +21,9 @@ The app lives in [`app/`](app) as a git submodule pinned to one commit, so this 
 **Built:** [`compose.yaml`](compose.yaml) runs PostgreSQL, the backend and the frontend. `docker compose up --build` builds both images and starts everything in order: the backend waits until PostgreSQL accepts connections, and the frontend waits until the backend is ready. Only the frontend and backend ports are published, and only on `127.0.0.1`. [`scripts/smoke.py`](scripts/smoke.py) walks one request from raised to done through the frontend, so a single run checks the page, the `/api` proxy, the backend and the database together.
 
 **Decision:** the backend's health check in compose calls `/api/ready`, not `/api/health`, so "healthy" means it can reach the database, not just that the process is up.
+
+### Step 3: CI builds, checks and pushes the images
+
+**Built:** a GitHub Actions workflow. It checks out the app submodule, lints both Dockerfiles with `docker build --check`, builds each image once, starts the stack in compose from those images and runs the smoke test. On `main` it pushes them to GitHub Container Registry, tagged with this repo's commit. Each image also carries labels with this repo's commit and the app's commit, so `docker inspect` tells you exactly what's inside.
+
+**Decision:** build once, test what ships. Compose takes the image names from `BACKEND_IMAGE` and `FRONTEND_IMAGE`, so CI tests the images it pushes instead of building fresh ones.

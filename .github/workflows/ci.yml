@@ -1,0 +1,67 @@
+name: ci
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  images:
+    # Build each image once, lint it, run the whole stack from it in compose,
+    # and push it to GitHub Container Registry when the commit is on main.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: name the images after this commit
+        run: |
+          tag=$(git rev-parse --short=7 HEAD)
+          {
+            echo "IMAGE_TAG=$tag"
+            echo "BACKEND_IMAGE=$REGISTRY/serviceops-backend:$tag"
+            echo "FRONTEND_IMAGE=$REGISTRY/serviceops-frontend:$tag"
+            echo "APP_REVISION=$(git -C app rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+
+      - name: lint the Dockerfiles
+        run: |
+          docker build --check -f docker/backend.Dockerfile app/backend
+          docker build --check -f docker/frontend.Dockerfile app/frontend
+
+      - name: build the images
+        run: |
+          for part in backend frontend; do
+            image_var="${part^^}_IMAGE"
+            docker build -f "docker/$part.Dockerfile" -t "${!image_var}" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --label "serviceops.app-revision=$APP_REVISION" \
+              "app/$part"
+          done
+          docker image ls --filter "reference=$REGISTRY/*"
+
+      - name: start the stack from those images
+        run: docker compose up --no-build --wait --wait-timeout 180
+
+      - name: smoke test through the frontend
+        run: python3 scripts/smoke.py http://127.0.0.1:3000
+
+      - name: show the logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: push to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$BACKEND_IMAGE"
+          docker push "$FRONTEND_IMAGE"
