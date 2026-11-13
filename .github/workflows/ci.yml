@@ -148,6 +148,43 @@ jobs:
       - name: smoke test again after the rollback
         run: python3 scripts/smoke.py http://127.0.0.1:8080
 
+      - name: back up the database, change it, restore it
+        run: |
+          count() {
+            kubectl -n serviceops exec statefulset/postgres --               psql -U postgres -tAc "SELECT count(*) FROM service_requests" serviceops
+          }
+          scripts/backup.sh > backup.sql
+          before=$(count)
+          python3 scripts/smoke.py http://127.0.0.1:8080 > /dev/null
+          echo "requests: $before at the backup, $(count) after another smoke test"
+          CONFIRM=yes scripts/restore.sh < backup.sql
+          after=$(count)
+          echo "requests after the restore: $after"
+          [ "$after" = "$before" ] || { echo "::error::the restore didn't bring back the backed-up data"; exit 1; }
+          # The app still works on the restored database, audit trigger included.
+          python3 scripts/smoke.py http://127.0.0.1:8080
+          kubectl -n serviceops exec statefulset/postgres --             psql -U postgres -tAc "SELECT count(*) FROM pg_trigger WHERE tgname = 'audit_events_append_only'" serviceops             | grep -qx 1
+
+      - name: a database outage makes the backend not-ready, not restarted
+        run: |
+          restarts() {
+            kubectl -n serviceops get pods -l app=backend               -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount} {end}'
+          }
+          before=$(restarts)
+          kubectl -n serviceops scale statefulset/postgres --replicas=0
+          kubectl -n serviceops wait pod -l app=postgres --for=delete --timeout=90s
+          kubectl -n serviceops wait pod -l app=backend --for=condition=Ready=false --timeout=60s
+          echo "Backend pods are not ready. Waiting longer than liveness would take to restart them."
+          sleep 40
+          during=$(restarts)
+          echo "restart counts: before [$before] during the outage [$during]"
+          [ "$before" = "$during" ] || { echo "::error::backend pods were restarted during the outage"; exit 1; }
+
+          kubectl -n serviceops scale statefulset/postgres --replicas=1
+          kubectl -n serviceops rollout status statefulset/postgres --timeout=120s
+          kubectl -n serviceops wait pod -l app=backend --for=condition=Ready --timeout=120s
+          python3 scripts/smoke.py http://127.0.0.1:8080
+
       - name: show what the cluster saw
         if: failure()
         run: |

@@ -20,8 +20,8 @@ revision() {
     -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}' 2>/dev/null || true
 }
 
-# 1. The namespace, and a database password generated once inside the cluster.
-#    It never exists anywhere else, so it can't end up in this repo.
+# 1. The namespace, and a random database password made on the first deploy.
+#    It's stored only as a Kubernetes Secret, never in a file or this repo.
 kubectl apply -f "$root/k8s/base/namespace.yaml"
 if ! kubectl -n "$ns" get secret serviceops-db >/dev/null 2>&1; then
   password=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
