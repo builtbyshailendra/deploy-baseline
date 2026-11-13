@@ -243,7 +243,7 @@ CI checks that Prometheus scrapes the backend and has seen the smoke test's requ
 | Requests at the backup, after one more, after the restore | 2, 3, 2 |
 | Backend restarts while PostgreSQL was down | None, as designed |
 
-**Learned:** images pushed to GitHub Container Registry with this repo as their source came out public, the same as the repo, so anyone can pull them without signing in.
+**Learned:** the images CI pushed to GitHub Container Registry from this public repo came out public. Anyone can pull them without signing in, which is why the Kubernetes section can skip the builds.
 
 ## Next
 
