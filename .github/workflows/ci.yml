@@ -102,8 +102,9 @@ jobs:
 
       - name: create a kind cluster
         run: |
-          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/$KIND_VERSION/kind-linux-amd64"
-          chmod +x kind && sudo mv kind /usr/local/bin/kind
+          # Download outside the checkout: the repo already has a kind/ folder.
+          curl -fsSLo "$RUNNER_TEMP/kind" "https://kind.sigs.k8s.io/dl/$KIND_VERSION/kind-linux-amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/kind" /usr/local/bin/kind
           kind create cluster --config kind/cluster.yaml --wait 120s
           kubectl version
           kind load docker-image --name serviceops             "$REGISTRY/serviceops-backend:$TAG" "$REGISTRY/serviceops-frontend:$TAG"
