@@ -1,0 +1,62 @@
+# The whole app on one machine, with one command:
+#   docker compose up --build
+# then open http://127.0.0.1:3000
+name: serviceops
+
+services:
+  postgres:
+    image: postgres:16.16-alpine
+    environment:
+      POSTGRES_DB: serviceops
+      # Local only. Trust auth keeps a password out of this file, and the database
+      # port isn't published, so only the containers on this network can reach it.
+      # The Kubernetes setup uses a generated password instead.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d serviceops"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  backend:
+    build:
+      context: app/backend
+      dockerfile: ../../docker/backend.Dockerfile
+    # CI builds the images once and passes their names in, so compose and
+    # Kubernetes test exactly the same images.
+    image: ${BACKEND_IMAGE:-serviceops-backend:local}
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres@postgres:5432/serviceops
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Ready, not just alive: the frontend shouldn't start sending traffic
+      # before the backend can reach the database.
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/ready', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: app/frontend
+      dockerfile: ../../docker/frontend.Dockerfile
+    image: ${FRONTEND_IMAGE:-serviceops-frontend:local}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:
