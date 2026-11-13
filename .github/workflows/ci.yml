@@ -111,6 +111,40 @@ jobs:
       - name: smoke test through the NodePort
         run: python3 scripts/smoke.py http://127.0.0.1:8080
 
+      - name: a bad release is refused and rolled back, and users don't notice
+        run: |
+          # Release "bad": the backend crashes on startup; the frontend is unchanged.
+          docker build -f test/bad-release.Dockerfile             --build-arg BASE="$REGISTRY/serviceops-backend:$TAG"             -t "$REGISTRY/serviceops-backend:bad" test
+          docker tag "$REGISTRY/serviceops-frontend:$TAG" "$REGISTRY/serviceops-frontend:bad"
+          kind load docker-image --name serviceops             "$REGISTRY/serviceops-backend:bad" "$REGISTRY/serviceops-frontend:bad"
+
+          python3 scripts/watch.py http://127.0.0.1:8080/api/ready > watch.log 2>&1 &
+          watcher=$!
+
+          if TIMEOUT=60s scripts/deploy.sh bad; then
+            echo "::error::the bad release was accepted"
+            exit 1
+          fi
+
+          kill -TERM "$watcher"
+          watch_ok=0
+          wait "$watcher" || watch_ok=$?
+          cat watch.log
+
+          for d in backend frontend; do
+            image=$(kubectl -n serviceops get deployment "$d" -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "$d is on $image"
+            [ "$image" = "$REGISTRY/serviceops-$d:$TAG" ] || { echo "::error::$d wasn't rolled back"; exit 1; }
+          done
+          kubectl -n serviceops rollout history deployment/backend
+          if [ "$watch_ok" != 0 ]; then
+            echo "::error::requests failed while the bad release was rolled back"
+            exit 1
+          fi
+
+      - name: smoke test again after the rollback
+        run: python3 scripts/smoke.py http://127.0.0.1:8080
+
       - name: show what the cluster saw
         if: failure()
         run: |

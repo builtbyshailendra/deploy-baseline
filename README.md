@@ -49,3 +49,16 @@ Every pod has three checks:
 - **A password made inside the cluster.** The deploy script generates the database password the first time and stores it as a Kubernetes Secret, so it never exists in this repo or in CI.
 
 **Learned:** the PostgreSQL image starts a temporary server while it creates a new database, listening only on its socket. `pg_isready` over the socket calls that "ready" a moment before it restarts, so the checks use `-h 127.0.0.1`. The compose file now does the same.
+
+### Step 5: a failing deploy rolls back
+
+**Built:** if a release isn't ready in time, [`scripts/deploy.sh`](scripts/deploy.sh) runs `kubectl rollout undo` on every Deployment that release changed and exits with an error. CI proves it on every push:
+
+1. It builds a release called `bad`, whose backend crashes on startup ([`test/bad-release.Dockerfile`](test/bad-release.Dockerfile)). Its frontend is unchanged.
+2. [`scripts/watch.py`](scripts/watch.py) starts calling the app through the cluster five times a second.
+3. It deploys `bad`. The new backend pod never becomes ready, so the old pods keep serving. After 60 seconds the script rolls back both the backend and the frontend.
+4. The job fails unless the deploy was refused, both Deployments are back on the previous images, the watcher saw no failed calls and the smoke test passes again.
+
+**Decision:** roll back the whole release, not just the part that failed. Here the frontend went out fine, but leaving it on a release whose backend was refused would mix versions.
+
+**Learned:** Kubernetes doesn't roll back by itself. A stuck rollout just stays stuck, with the old pods serving, until someone or something runs `kubectl rollout undo`.
