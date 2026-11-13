@@ -57,6 +57,9 @@ jobs:
       - name: smoke test through the frontend
         run: python3 scripts/smoke.py http://127.0.0.1:3000
 
+      - name: check Prometheus and the Grafana dashboard
+        run: python3 scripts/check_monitoring.py
+
       - name: show the logs
         if: failure()
         run: docker compose logs --no-color

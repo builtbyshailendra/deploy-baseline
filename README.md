@@ -62,3 +62,19 @@ Every pod has three checks:
 **Decision:** roll back the whole release, not just the part that failed. Here the frontend went out fine, but leaving it on a release whose backend was refused would mix versions.
 
 **Learned:** Kubernetes doesn't roll back by itself. A stuck rollout just stays stuck, with the old pods serving, until someone or something runs `kubectl rollout undo`.
+
+### Step 6: metrics and a dashboard
+
+**Built:** the app now serves Prometheus metrics at `/metrics` (added to serviceops-workbench as its Step 9, and the submodule moved to that commit). Compose runs Prometheus, scraping the backend every 5 seconds, and Grafana with one dashboard, loaded from [`monitoring/grafana/dashboards/serviceops.json`](monitoring/grafana/dashboards/serviceops.json):
+
+| Panel | Shows |
+|---|---|
+| Waiting for triage, Waiting for approval, Approved, Done | How many requests are in each status right now |
+| Calls per second, by route | API traffic, not counting health checks |
+| Refused steps per minute | `403` wrong person, `409` wrong status, `422` something missing |
+| Response time, 95th percentile | Per route |
+| Server errors per minute | Should stay at zero |
+
+CI checks that Prometheus scrapes the backend and has seen the smoke test's request finish, runs every dashboard query against Prometheus to prove it's valid PromQL, and checks that Grafana loaded the dashboard.
+
+**Decision:** Grafana is read-only. Anyone on the machine can view the dashboard without logging in, but nobody can log in to change it. The dashboard lives in git, so a change goes through a commit like everything else.

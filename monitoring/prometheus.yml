@@ -1,0 +1,9 @@
+# Prometheus for the compose stack: scrape the backend every 5 seconds.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: backend
+    static_configs:
+      - targets: ["backend:8000"]

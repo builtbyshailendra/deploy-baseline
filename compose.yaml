@@ -1,6 +1,7 @@
 # The whole app on one machine, with one command:
 #   docker compose up --build
-# then open http://127.0.0.1:3000
+# then open http://127.0.0.1:3000 for the app and http://127.0.0.1:3001 for
+# the dashboard.
 name: serviceops
 
 services:
@@ -61,6 +62,37 @@ services:
       retries: 20
     ports:
       - "127.0.0.1:3000:3000"
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    environment:
+      # Anyone on this machine can look; nobody can log in or change anything.
+      # The dashboard lives in this repo, so changes go through git.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/serviceops.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3001:3000"
 
 volumes:
   pgdata:
